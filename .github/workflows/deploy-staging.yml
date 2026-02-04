@@ -1,0 +1,93 @@
+name: Deploy to ECS (staging)
+
+on:
+  push:
+    branches: [ "main" ]
+
+env:
+  AWS_REGION: us-east-2
+  AWS_ACCOUNT_ID: "131317348281"
+  ECR_REPOSITORY: phr-app
+  ECS_CLUSTER: phr-staging
+  ECS_SERVICE: phr-staging-def-service-7bpt2z7f
+  TASK_FAMILY: phr-staging-def
+  CONTAINER_NAME: phr-staging-cont   # usually matches the container name in the task definition
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::131317348281:role/phr-github-deploy-staging
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker build -t $ECR_REGISTRY/${ECR_REPOSITORY}:${IMAGE_TAG} .
+          docker tag  $ECR_REGISTRY/${ECR_REPOSITORY}:${IMAGE_TAG} $ECR_REGISTRY/${ECR_REPOSITORY}:latest
+          docker push $ECR_REGISTRY/${ECR_REPOSITORY}:${IMAGE_TAG}
+          docker push $ECR_REGISTRY/${ECR_REPOSITORY}:latest
+          echo "IMAGE_URI=$ECR_REGISTRY/${ECR_REPOSITORY}:${IMAGE_TAG}" >> $GITHUB_ENV
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Create new task definition revision with updated image
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${TASK_FAMILY}" \
+            --query taskDefinition > taskdef.json
+
+          cat taskdef.json | jq \
+            --arg IMAGE "$IMAGE_URI" \
+            --arg CONTAINER "${CONTAINER_NAME}" \
+            '
+            del(
+              .taskDefinitionArn,
+              .requiresAttributes,
+              .compatibilities,
+              .revision,
+              .status,
+              .registeredAt,
+              .registeredBy
+            )
+            | (.containerDefinitions[] | select(.name==$CONTAINER) | .image) = $IMAGE
+            ' > taskdef-new.json
+
+          aws ecs register-task-definition \
+            --cli-input-json file://taskdef-new.json > new-taskdef-out.json
+
+          NEW_TD_ARN=$(cat new-taskdef-out.json | jq -r '.taskDefinition.taskDefinitionArn')
+          echo "NEW_TASK_DEF_ARN=$NEW_TD_ARN" >> $GITHUB_ENV
+          echo "Registered new task definition: $NEW_TD_ARN"
+
+      - name: Update ECS service
+        run: |
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "${ECS_SERVICE}" \
+            --task-definition "${NEW_TASK_DEF_ARN}" \
+            --force-new-deployment
+
+      - name: Wait for service stability
+        run: |
+          aws ecs wait services-stable \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}"
