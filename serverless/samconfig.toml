@@ -1,0 +1,14 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "phr-serverless-staging"
+resolve_s3 = true
+s3_prefix = "phr-serverless-staging"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+disable_rollback = true
+parameter_overrides = "CognitoUserPoolId=\"us-east-2_qKGXKYWeq\" CognitoAppClientId=\"36094ik5eiugklsp2rgoa8h97h\""
+image_repositories = []
+
+[default.global.parameters]
+region = "us-east-2"
