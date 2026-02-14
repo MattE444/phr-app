@@ -57,6 +57,14 @@ Resources:
         Variables:
           TABLE_NAME: !Ref PhrTable
       Events:
+        Health:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref PhrApi
+            Path: /health
+            Method: GET
+            Auth:
+              Authorizer: NONE
         ProxyApi:
           Type: HttpApi
           Properties:
