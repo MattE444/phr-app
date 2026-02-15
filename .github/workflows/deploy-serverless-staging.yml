@@ -1,0 +1,43 @@
+
+name: Deploy Serverless API (staging)
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "serverless/**"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::131317348281:role/phr-github-sam-deploy-staging
+          aws-region: us-east-2
+
+      - uses: aws-actions/setup-sam@v2
+
+      - name: Build
+        working-directory: serverless
+        run: sam build
+
+      - name: Deploy
+        working-directory: serverless
+        run: |
+          sam deploy \
+            --stack-name phr-serverless-staging \
+            --region us-east-2 \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --capabilities CAPABILITY_IAM \
+            --parameter-overrides \
+              CognitoUserPoolId=us-east-2_qKGXKYWeq \
+              CognitoAppClientId=36094ik5eiugklsp2rgoa8h97h
